@@ -1,0 +1,867 @@
+<?php
+
+/*
+ ======================================================================
+ DragonPHP - ActiveRecord (using PDO)
+
+ A web application framework based on the MVC Model 2 architecture.
+
+ by Jeff Hoang
+
+ Latest version, features, manual and examples:
+        http://www.dragonphp.com/
+
+ -----------------------------------------------------------------------
+ LICENSE
+
+ This program is free software; you can redistribute it and/or
+ modify it under the terms of the GNU General Public License (GPL)
+ as published by the Free Software Foundation; either version 2
+ of the License, or (at your option) any later version.
+
+ This program is distributed in the hope that it will be useful,
+ but WITHOUT ANY WARRANTY; without even the implied warranty of
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ GNU General Public License for more details.
+
+ To read the license please visit http://www.gnu.org/copyleft/gpl.html
+ ======================================================================
+
+ @package    plugins/database
+ @author     Jeff Hoang <jdragon@gmail.com>
+ @copyright  2006 Jeff Hoang
+ */
+
+require_once(FRAMEWORK_PLUGINS_DIR . 'database/ActiveRecordIF.php');
+require_once(FRAMEWORK_COMMON_DIR . 'CommonLogger.php');
+require_once(FRAMEWORK_HELPERS_DIR . 'CacheHelper.php');
+require_once(FRAMEWORK_COMMON_DIR . 'IniParser.php');
+require_once(FRAMEWORK_COMMON_DIR . 'FrameworkConstants.php');
+require_once(FRAMEWORK_COMMON_DIR . 'LoggerFactory.php');
+require_once(FRAMEWORK_MODEL_DIR . 'Model.php');
+require_once(FRAMEWORK_HELPERS_DIR . 'StringUtilHelper.php');
+
+class ActiveRecord implements ActiveRecordIF {
+
+	protected $_data = array();
+	protected $_db;
+
+	const DB_TYPE = 'mysql';
+	const ENTITY_CACHE_AGE = '36000';
+	const PRIMARY_KEY_DIRECTIVE = 'PRI';
+
+	protected static $_logger;
+
+	public function __get($record) {
+        if (isset($this->_data[$record])) {
+            return $this->_data[$record];
+        }
+    }
+
+    public function __set($key, $value) {
+    	$this->_data[$key] = $value;
+    }
+
+    public function setData($data){
+    	$this->_data = $data;
+    }
+
+   	public function init(){
+
+   		// create logger
+		self::$_logger = LoggerFactory::getInstance(ucfirst($this->{FrameworkConstants::ENTITY_NAME}) . 'ActiveRecord');
+
+   		// load database configs
+   		$file = $this->{FrameworkConstants::DATABASE_CONFIG_FILE};
+   		$configSection = $this->{FrameworkConstants::DATABASE_CONFIG_SECTION};
+
+   		if(!is_file($file)){
+   			throw new Exception("Can't find database config file...");
+   		}
+
+   		self::$_logger->debug('Looking for db section -> ' . $configSection);
+
+   		$configData = IniParser::parse($file, $configSection);
+
+   		$data = $configData[$configSection];
+
+		$this->{FrameworkConstants::DATABASE_TYPE} = $data[FrameworkConstants::DATABASE_TYPE];
+		$this->{FrameworkConstants::DATABASE_HOST} = $data[FrameworkConstants::DATABASE_HOST];
+		$this->{FrameworkConstants::DATABASE_NAME} = $data[FrameworkConstants::DATABASE_NAME];
+		$this->{FrameworkConstants::DATABASE_USERNAME} = $data[FrameworkConstants::DATABASE_USERNAME];
+		$this->{FrameworkConstants::DATABASE_PASSWORD} = $data[FrameworkConstants::DATABASE_PASSWORD];
+
+		// Load table info
+		$this->getTableInfo();
+	}
+
+	public function getConnection(){
+
+		try {
+
+			if(!isset($this->_db) || $this->_db == null){
+
+				$dbType = $this->{FrameworkConstants::DATABASE_TYPE};
+				$host = $this->{FrameworkConstants::DATABASE_HOST};
+				$dbName = $this->{FrameworkConstants::DATABASE_NAME};
+				$userName = $this->{FrameworkConstants::DATABASE_USERNAME};
+				$password = $this->{FrameworkConstants::DATABASE_PASSWORD};
+
+				$this->_db = new PDO($dbType . ':host='. $host . ';dbname='. $dbName, $userName, $password);
+			}
+
+		} catch( PDOException $e ){
+			
+			
+			$traceMessage = '<p>Message: '.  $e->getMessage();
+			
+			if(strcasecmp(LOGGER_LEVEL, '0') == 0){
+				$traceMessage .= '<p>StackTrace: <pre>' . $e->getTraceAsString() . '</pre></p>';
+			}
+			
+			throw new PDOException($traceMessage);
+		}
+	}
+
+	public function beginTransaction(){
+
+		if(!$this->_db){
+			$this->getConnection();
+		}
+
+		$this->_db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+ 		$this->_db->beginTransaction();
+
+	}
+
+	public function commit(){
+		$this->_db->commit();
+	}
+
+	public function close(){
+		$this->_db = null;
+	}
+
+	public function endTransaction(){
+		$this->_db->commit();
+		$this->close();
+	}
+
+	public function rollBack(){
+		$this->_db->rollback();
+	}
+
+	public function rollBackTransaction(){
+		$this->rollBack();
+		$this->_db = null;
+	}
+
+	public function update($criteria = false){
+
+		try{
+
+			$sql = $this->update_statement;
+
+			// get input data
+			$data = $this->data;
+
+			$count = 0;
+
+			$inputParams = array();
+
+			// set the input params
+			foreach($this->columns as $field){
+				$fieldName = $field->Field;
+
+				$primaryKey = $field->Key;
+
+				if(!strcmp($primaryKey, 'PRI') == 0){
+
+					if(isset($data[$fieldName])){
+
+						if($count > 0){
+							$sql .= ', ' . $fieldName . ' = ?';
+						}else{
+							$sql .= ' set ' . $fieldName . ' = ?';
+						}
+
+						$inputParams[] = $data[$fieldName];
+
+						$count++;
+					}
+
+				}
+			}
+
+			// check for criteria
+			$criteria = $this->{FrameworkConstants::CRITERIA_PREPARED_CONDITIONS};
+			$criteriaData = $this->{FrameworkConstants::CRITERIA_DATA};
+
+			if(isset($criteria) && is_array($criteria)){
+
+				$count = 0;
+				foreach($criteria as $fieldInfo){
+
+					$fieldName = $fieldInfo['field_name'];
+					$expression = $fieldInfo['expression'];
+					$junction = $fieldInfo['junction'];
+
+					if($count == 0){
+						$sql .= ' where ' . $fieldName . ' ' . $expression . ' ? ';
+
+					}else{
+						$sql .= ' ' . $junction . ' ' . $fieldName . ' ' . $expression . ' ? ';
+					}
+
+					$inputParams[] = $criteriaData[$count];
+					$count++;
+				}
+			}
+
+			self::$_logger->debug($sql);
+
+			$this->beginTransaction();
+
+			$this->executePreparedStatement($sql, false, false, $inputParams);
+
+			$this->endTransaction();
+
+		}catch(Exception $ex){
+			$this->rollBackTransaction();
+			throw new Exception($ex->getMessage());
+		}
+	}
+
+	public function delete($criteria = false){
+
+		try{
+
+			$this->beginTransaction();
+
+			$sql = $this->delete_statement;
+
+			// check for criteria
+			$criteriaCondition = $this->{FrameworkConstants::CRITERIA_PREPARED_CONDITIONS};
+			$criteriaData = $this->{FrameworkConstants::CRITERIA_DATA};
+
+			$inputParams = null;
+
+			if(isset($criteriaCondition) && isset($criteriaData) && is_string($criteriaCondition)){
+				$sql .= ' where '. $criteriaCondition;
+
+				$inputParams = array();
+
+				foreach($criteriaData as $data){
+					$inputParams[] = $data;
+				}
+			}elseif(is_array($criteriaCondition)){
+
+				$count = 0;
+
+				if(!isset($inputParams)){
+					$inputParams = array();
+				}
+
+				foreach($criteriaCondition as $fieldInfo){
+
+					$fieldName = $fieldInfo['field_name'];
+					$expression = $fieldInfo['expression'];
+					$junction = $fieldInfo['junction'];
+
+					if($count == 0){
+
+						if(empty($joins)){
+
+							$sql .= ' where ' . $fieldName . ' ' . $expression . ' ? ';
+						}else {
+							$sql .= ' ' . $junction . ' ' . $fieldName . ' ' . $expression . ' ? ';
+						}
+					}else{
+						$sql .= ' ' . $junction . ' ' . $fieldName . ' ' . $expression . ' ? ';
+					}
+
+					$inputParams[] = $criteriaData[$count];
+					$count++;
+				}
+			}
+
+			self::$_logger->debug($sql);
+			self::$_logger->debug($inputParams, true, true);
+
+			$this->executePreparedStatement($sql, false, false, $inputParams);
+
+			$this->endTransaction();
+
+		}catch(Exception $ex){
+
+			$this->rollBackTransaction();
+			throw new Exception($ex->getMessage());
+		}
+	}
+
+	public function create($criteria = false, $updateOnDuplicate = false){
+
+		$entityObject = new Model();
+
+		// default id name
+		$idName = 'id';
+
+		try{
+
+			$this->beginTransaction();
+
+			$inputParams = array();
+
+			// get input data
+			$data = $this->data;
+
+			$primaryKeyName = null;
+			
+			// set the input params
+			foreach($this->columns as $field){
+				$fieldName = $field->Field;
+				$primaryKey = $field->Key;
+				$extra = $field->Extra;
+				$allowNull = $field->Null;
+
+				if(isset($primaryKey) && strcmp($extra, 'auto_increment') == 0){
+					// set id name
+					$idName = $fieldName;
+					
+					$fieldName = null;
+					
+				}
+				
+				if(isset($primaryKey) && strcmp($primaryKey, self::PRIMARY_KEY_DIRECTIVE) == 0){
+					$primaryKeyName = $fieldName;
+				}
+
+				if($fieldName){
+					$fieldValue = $data[$fieldName];
+
+					self::$_logger->debug($fieldName . ' = ' . $fieldValue);
+
+					if(strcmp($allowNull, 'NO') == 0 && !isset($fieldValue)){
+						throw new Exception ('Error! ' . $fieldName . ' can not be NULL');
+					}elseif(isset($fieldValue)){
+						$inputParams[] = $fieldValue;
+						$entityObject->{$fieldName} = $fieldValue;
+					}else{
+						$inputParams[] = null;
+						$entityObject->{$fieldName} = null;
+					}
+				}
+			}
+			
+			$sql = $this->create_statement;
+
+			if($updateOnDuplicate){
+				$sql .= ' ON duplicate KEY UPDATE ';
+				
+				$cnt = 0;
+				foreach($data as $fieldName=>$fieldValue){
+					
+					if(strcmp($fieldName, $primaryKeyName) == 0){
+					
+						self::$_logger->debug('Primary Key = ' . $fieldName);
+						
+					}else{
+						
+						if($cnt == 0 && !empty($fieldValue)){
+							
+							$sql .= $fieldName . '= ?';
+							
+							$inputParams[] = $fieldValue;
+							
+							$cnt++;
+						}elseif($cnt > 0 && !empty($fieldValue)){
+							
+							$sql .= ', ' . $fieldName . '= ?';	
+							
+							$inputParams[] = $fieldValue;
+							
+							$cnt++;
+						}
+						
+						//echo $fieldName . '=' . $fieldValue . "\n";
+					}
+				}
+			}
+			
+			// execute the query
+			self::$_logger->debug($inputParams, true, true);
+
+			if($updateOnDuplicate){
+					self::$_logger->debug('Update on duplicate sql: ' . $sql);
+			}
+			
+			$id = $this->executePreparedStatement($sql, false, true, $inputParams);
+
+			$entityObject->{$idName} = $id;
+
+			$this->endTransaction();
+
+		}catch(Exception $ex){
+
+			$this->rollBackTransaction();
+			throw new Exception($ex->getMessage());
+		}
+
+		return $entityObject;
+	}
+
+	public function read($criteria = false){
+
+		$data = null;
+
+		try{
+
+			$this->getConnection();
+
+			$sql = $this->read_statement;
+
+			$joins = $this->joins;
+
+			if(isset($joins)){
+				$sql = $this->joined_query;
+			}
+
+			$resultSet = $this->{FrameworkConstants::RESULT_SET};
+
+			if(!empty($resultSet)){
+				//$resulSet = preg_replace("/\*/", "\\*", $resulSet);
+				$sql = preg_replace("/\*/", "$resultSet", $sql);
+			}
+
+			$preparedCriteria = $this->{FrameworkConstants::CRITERIA_PREPARED_CONDITIONS};
+			$criteriaData = $this->{FrameworkConstants::CRITERIA_DATA};
+
+			$inputParams = null;
+
+			if(!empty($preparedCriteria) && !empty($criteriaData) && is_string($preparedCriteria)){
+				$inputParams = array();
+
+				if(!$this->joins){
+					$sql .= ' where ' . $preparedCriteria;
+				}else{
+					$sql .= ' and ' . $preparedCriteria;
+				}
+
+				foreach($criteriaData as $data){
+					$inputParams[] = $data;
+				}
+			}
+
+			if(isset($preparedCriteria) && is_array($preparedCriteria)){
+
+				$count = 0;
+
+				if(!isset($inputParams)){
+					$inputParams = array();
+				}
+
+				foreach($preparedCriteria as $fieldInfo){
+
+					$fieldName = $fieldInfo['field_name'];
+					$expression = $fieldInfo['expression'];
+					$junction = $fieldInfo['junction'];
+					$leftBound = $fieldInfo['left_bound'];
+					$rightBound = $fieldInfo['right_bound'];
+					$leftParenthesis = $fieldInfo['left_parenthesis'];
+					$rightParenthesis = $fieldInfo['right_parenthesis'];
+
+					if($count == 0){
+
+						if(empty($joins)){
+
+							if(!$leftBound || !$rightBound){
+								$sql .= ' where ' . $fieldName . ' ' . $expression . ' ? ';
+							}else{
+								$sql .= ' where ' . $fieldName . ' ' . $expression . ' ' . $leftBound . '?' . $rightBound;
+							}
+						}else {
+
+
+							if(!$leftBound || !$rightBound){
+
+								if($leftParenthesis){
+									$sql .= ' ' . $junction . ' (' . $fieldName . ' ' . $expression . ' ? ';
+								}else{
+									$sql .= ' ' . $junction . ' ' . $fieldName . ' ' . $expression . ' ? ';
+								}
+							}else{
+
+								if($leftParenthesis){
+									$sql .= '(' . $fieldName . ' ' . $expression . ' ' . $leftBound . '?' . $rightBound;
+								}else{
+									$sql .= ' ' . $junction . ' ' . $fieldName . ' ' . $expression . ' ' . $leftBound . '?' . $rightBound;
+								}
+							}
+
+						}
+					}else{
+
+						if(!$leftBound || !$rightBound){
+
+							if($rightParenthesis){
+								$sql .= $junction . ' ' . $fieldName . ' ' . $expression . ' ? ' . ')';
+							}else{
+								$sql .= $junction . ' ' . $fieldName . ' ' . $expression . ' ? ';
+							}
+
+						}else{
+
+							if($rightParenthesis){
+								$sql .= ' ' . $junction . ' ' . fieldName . ' ' . $expression . ' ' . $leftBound . '?' . $rightBound . ')';
+							}else{
+								$sql .= ' ' . $junction . ' ' . $fieldName . ' ' . $expression . ' ' . $leftBound . '?' . $rightBound;
+							}
+						}
+
+					}
+
+					$inputParams[] = $criteriaData[$count];
+					$count++;
+				}
+			}
+
+			$groupBy = $this->{FrameworkConstants::GROUP_BY};
+			if(!empty($groupBy)){
+				$sql .= ' group by ' . $groupBy;
+			}
+
+			$orderBy = $this->{FrameworkConstants::ORDER_BY};
+
+			if(!empty($orderBy)){
+				$sql .= ' order by ' . $orderBy;
+			}
+
+			$first = $this->{FrameworkConstants::FIRST_RESULT};
+			$last = $this->{FrameworkConstants::LAST_RESULT};
+
+			if(!empty($first) && !empty($last)){
+                $sql .= ' limit ' . $first . ',' . $last;
+			}elseif(empty($first) && !empty($last)){
+                $sql .= ' limit ' . $last;
+			}
+
+			$rowKey = $this->{FrameworkConstants::ROW_KEY};
+
+			$data = $this->executePreparedStatement($sql, true, false, $inputParams, $rowKey);
+
+			$this->close();
+
+		}catch(Exception $ex){
+			$this->close();
+			throw new Exception($ex->getMessage());
+		}
+
+		return $data;
+	}
+
+
+	public function insertBatch($criteria){
+
+		try{
+
+			$mainData = $this->{FrameworkConstants::BATCH_DATA};
+
+			if(is_array($mainData)){
+
+				$sql = $this->create_statement;
+
+				$this->beginTransaction();
+
+				foreach($mainData as $dataRow){
+
+					$inputParams = array();
+
+					foreach($dataRow as $data){
+						$inputParams[] = $data;
+					}
+
+					$this->executePreparedStatement($sql, false, false, $inputParams);
+				}
+
+				$this->endTransaction();
+
+
+			}
+
+		}catch(Exception $ex){
+			$this->rollBackTransaction();
+			throw new Exception($ex->getMessage());
+		}
+	}
+
+	public function call($procedureName, $parameters){
+
+		try {
+
+			$this->getConnection();
+
+			$sql = 'call ' . $procedureName . '(';
+
+			$inputParams = array();
+			$count = 0;
+			foreach($parameters as $parameter){
+
+				if($count == 0){
+					$sql .= '?';
+				}else{
+					$sql .= ',?';
+				}
+
+				$inputParams[] = $parameter;
+				$count++;
+			}
+
+			$sql .= ')';
+
+			$rowKey = $this->{FrameworkConstants::ROW_KEY};
+
+			$data = $this->executePreparedStatement($sql, true, false, $inputParams, $rowKey);
+
+		}catch(Exception $ex){
+			$this->close();
+			throw new Exception($ex->getMessage());
+		}
+	}
+
+	public function executePreparedStatement($sql, $returnResults = false, $returnKey = false, $inputParams = false, $rowKey = false){
+
+		try {
+
+			self::$_logger->debug('executing query: ' . $sql);
+			self::$_logger->debug($inputParams, true, true);
+
+			$stmt = $this->_db->prepare($sql);
+
+			$data = array();
+
+			if($returnResults){
+
+				if($inputParams){
+					if( $stmt->execute($inputParams)) {
+						while( $row = $stmt->fetch(PDO::FETCH_OBJ)) {
+
+							if($rowKey){
+								$data[$row->{$rowKey}] = $row;
+							}else{
+			    				$data[] = $row;
+							}
+
+							if(!row){
+								break;
+							}
+		    			}
+		    		}
+				}else{
+					if( $stmt->execute()) {
+						while( $row = $stmt->fetch(PDO::FETCH_OBJ)) {
+							if($rowKey){
+								$data[$row->{$rowKey}] = $row;
+							}else{
+			    				$data[] = $row;
+							}
+
+							if(!row){
+								break;
+							}
+		    			}
+		    		}
+				}
+
+	    		if($returnKey){
+	    			$id = $this->_getLastInsertedKey();
+	    			$data['primary_key'] = $id;
+	    		}
+
+	    		self::$_logger->debug($data, true, true);
+
+	    		return $data;
+			}else{
+				$stmt->execute($inputParams);
+
+				if($returnKey){
+					return $this->_getLastInsertedKey();
+				}
+			}
+		}catch(Exception $ex){
+			self::$_logger->error($ex->getMessage());
+		}
+	}
+
+	protected function _getLastInsertedKey(){
+
+		$id = null;
+
+		$stmt = $this->_db->prepare("SELECT LAST_INSERT_ID()");
+		if ($stmt->execute()) {
+  			while ($row = $stmt->fetch()) {
+   				$id = $row[0];
+  			}
+		}
+		return $id;
+	}
+
+	public function getTableInfo(){
+
+		try {
+
+			$entityName = $this->{FrameworkConstants::ENTITY_NAME};
+
+			$entityName = strtolower(StringUtilHelper::underscore($entityName));
+
+			// pluralize it
+			$lastCharacter = substr($entityName, strlen($entityName) - 1, 1);
+
+			if(strcmp($lastCharacter, 's') != 0 && $this->{FrameworkConstants::PLURALIZE}){
+				$entityName .= 's';
+			}else{
+				// check last 2 characters and pluralize accordingly
+				$lastTwoCharacters = substr($entityName, strlen($entityName) - 2, 2);
+
+				if(strcasecmp($lastTwoCharacters, 'ss') == 0){
+					$entityName .= 'es';
+				}
+			}
+
+			self::$_logger->debug('Entity name -> ' . $entityName);
+
+			self::$_logger->debug('Caching within: ' . CACHE_DIR . APPLICATION_NAME . '/database_tables/');
+
+			// check from cache first
+			$fields = CacheHelper::getCache(CACHE_DIR . APPLICATION_NAME . '/database_tables/', $entityName, self::ENTITY_CACHE_AGE, true);
+
+			if(empty($fields)){
+
+				$fields = array();
+				$this->getConnection();
+
+
+				$sql = 'SHOW COLUMNS FROM ' . $entityName;
+
+				$stmt = $this->_db->prepare($sql);
+
+				if( $stmt->execute()) {
+	    			while( $row = $stmt->fetch(PDO::FETCH_OBJ)) {
+	    				$fields[$row->Field] = $row;
+	    			}
+				}
+
+				// cache the fields
+				CacheHelper::saveCache(CACHE_DIR . APPLICATION_NAME . '/database_tables/' , $entityName, $fields, true);
+
+				$this->close();
+			}
+
+			$this->columns = $fields;
+
+			$createSql = CacheHelper::getCache(CACHE_DIR . APPLICATION_NAME . '/database_tables/', $entityName  . '_create_statement', self::ENTITY_CACHE_AGE);
+
+			if(empty($createSql)){
+
+				// create crud prepared statements
+				$createSql = 'insert into ' . $entityName;
+
+				$sqlFields = '';
+				$sqlValues = '';
+				$count = 0;
+
+				foreach($fields as $field){
+					$primaryKey = $field->Key;
+					$extra = $field->Extra;
+					$fieldName = $field->Field;
+
+					if(isset($primaryKey) && strcmp($extra, 'auto_increment') == 0){
+						$fieldName = null;
+					}
+
+					if($fieldName){
+						if($count < 1){
+							$sqlFields = $fieldName;
+							$sqlValues = '?' ;
+						}else{
+							$sqlFields .= ', ' . $fieldName;
+							$sqlValues .= ', ?';
+						}
+
+						$count++;
+					}
+				}
+
+				$createSql = $createSql . '(' . $sqlFields . ') values (' . $sqlValues . ')';
+
+				// cache this prepared statement
+				CacheHelper::saveCache(CACHE_DIR . APPLICATION_NAME . '/database_tables/' , $entityName . '_create_statement', $createSql);
+			}
+
+
+			$this->create_statement = $createSql;
+			self::$_logger->debug('Caching: ' . $createSql);
+
+			// create read/select prepared statement
+			$readSql = CacheHelper::getCache(CACHE_DIR . APPLICATION_NAME . '/database_tables/', $entityName  . '_read_statement', self::ENTITY_CACHE_AGE);
+
+			if(empty($readSql)){
+
+				$readSql = 'select * from ' . $entityName;
+
+				CacheHelper::saveCache(CACHE_DIR . APPLICATION_NAME . '/database_tables/' , $entityName . '_read_statement', $readSql);
+			}
+
+			$this->read_statement = $readSql;
+			self::$_logger->debug('Caching: ' . $readSql);
+
+			// create update prepared statement
+			$updateSql = CacheHelper::getCache(CACHE_DIR . APPLICATION_NAME . '/database_tables/', $entityName  . '_update_statement', self::ENTITY_CACHE_AGE);
+
+			if(empty($updateSql)){
+
+				$updateSql = 'update ' . $entityName;
+
+				CacheHelper::saveCache(CACHE_DIR . APPLICATION_NAME . '/database_tables/' , $entityName . '_update_statement', $updateSql);
+			}
+
+			$this->update_statement = $updateSql;
+			self::$_logger->debug('Caching: ' . $updateSql);
+
+			// create delete prepared statement
+			$deleteSql = CacheHelper::getCache(CACHE_DIR . APPLICATION_NAME . '/database_tables/', $entityName  . '_delete_statement', self::ENTITY_CACHE_AGE);
+
+			if(empty($deleteSql)){
+
+				$deleteSql = 'delete from ' . $entityName;
+
+				CacheHelper::saveCache(CACHE_DIR . APPLICATION_NAME . '/database_tables/' , $entityName . '_delete_statement', $deleteSql);
+			}
+
+			$this->delete_statement = $deleteSql;
+			self::$_logger->debug($deleteSql);
+
+			if($this->joins){
+
+				$from = $this->joins['from'];
+				$where = $this->joins['where'];
+
+				//$sql = CacheHelper::getCache(CACHE_DIR . APPLICATION_NAME . '/database_tables/', $from . '_' . $where . '_statement', self::ENTITY_CACHE_AGE);
+
+				//if(empty($sql)){
+				$sql = 'select * from ' . $from . ' where ' . $where;
+
+					//CacheHelper::saveCache(CACHE_DIR . APPLICATION_NAME . '/database_tables/' , $from . '_' . $where . '_statement', $sql);
+				//}
+
+				$this->joined_query = $sql;
+
+				self::$_logger->debug('Caching: ' . $sql);
+			}
+
+		}catch(Exception $ex){
+			$this->close();
+			self::$_logger->error('Could not delete record', $ex);
+		}
+	}
+}
+?>

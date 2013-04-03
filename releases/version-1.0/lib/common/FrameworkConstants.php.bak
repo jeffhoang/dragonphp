@@ -1,0 +1,97 @@
+<?php
+
+/*
+ ======================================================================
+ DragonPHP - FrameworkConstants
+
+ A web application framework based on the MVC Model 2 architecture.
+
+ by Jeff Hoang
+
+ Latest version, features, manual and examples:
+        http://www.dragonphp.com/
+
+ -----------------------------------------------------------------------
+ LICENSE
+
+ This program is free software; you can redistribute it and/or
+ modify it under the terms of the GNU General Public License (GPL)
+ as published by the Free Software Foundation; either version 2
+ of the License, or (at your option) any later version.
+
+ This program is distributed in the hope that it will be useful,
+ but WITHOUT ANY WARRANTY; without even the implied warranty of
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ GNU General Public License for more details.
+
+ To read the license please visit http://www.gnu.org/copyleft/gpl.html
+ ======================================================================
+
+ @package    common
+ @author     Jeff Hoang <jdragon@gmail.com>
+ @copyright  2006 Jeff Hoang
+ */
+
+class FrameworkConstants {
+
+	const AR_CREATE = 'create';
+	const AR_READ = 'read';
+	const AR_UPDATE = 'update';
+	const AR_DELETE = 'delete';
+	const AR_INSERT_BATCH = 'insertBatch';
+	const AR_CALL = 'call';
+
+	const ENTITY_NAME = 'entity_name';
+
+	const SERVICE_MODULE = 'service_module';
+	const SERVICE_NAME = 'service_name';
+	const SERVICE_DIR = 'service_dir';
+
+	const DAO_DIR = 'dao_dir';
+	const DAO = 'dao';
+	const ACTIVE_RECORD = 'active_record';
+	const DEFAULT_SECTION = 'default';
+	const DATABASE_CONFIG_FILE_NAME = 'env_db.ini';
+
+	const DATABASE_MYSQL = 'mysql';
+	const DATABASE_TYPE = 'db_type';
+	const DATABASE_HOST = 'db_host';
+	const DATABASE_NAME = 'db_name';
+	const DATABASE_USERNAME = 'db_username';
+	const DATABASE_PASSWORD = 'db_password';
+
+	const DATABASE_CONFIG_FILE = 'db_config_file';
+	const DATABASE_CONFIG_SECTION = 'db_config_section';
+
+	const CREATE_CRITERIA = 'create_criteria';
+	const READ_CRITERIA = 'read_criteria';
+	const UPDATE_CRITERIA = 'update_criteria';
+	const DELETE_CRITERIA = 'delete_criteria';
+	const INSERT_BATCH_CRITERIA = 'insert_batch_criteria';
+
+	const CRITERIA_PREPARED_CONDITIONS = 'criteria_key';
+	const CRITERIA_DATA = 'criteria_data';
+	const ORDER_BY = 'order_by';
+	const GROUP_BY = 'group_by';
+	const JOINS = 'joins';
+	const RESULT_SET = 'result_set';
+	const DATA = 'data';
+	const ROW_KEY = 'row_key';
+	const BATCH_DATA = 'batch_data';
+
+	const ACL_PREFIX = 'ACL_';
+	const AR_PARAMETERS = 'ar_parameters';
+	const AR_PROCEDURE_NAME = 'ar_procedure_name';
+	const PLURALIZE = 'ar_pluralize';
+
+	const FIRST_RESULT = 'first';
+	const LAST_RESULT = 'last';
+	
+	const MYSQL_COMMAND = 'mysql_command';
+	const MYSQL_COMMAND_CONTINUE_ON_ERROR = 'mysql_continue_on_error';
+	const CONDITIONS = 'conditions';
+	const ENTITIES = 'entities';
+	const RETURN_ERRORS = 'return_errors';
+	const RESET = 'reset';
+}
+?>
