@@ -1,0 +1,7 @@
+/* ^^^^^^^^ BELOW IS THE CODE FOR THE MENU ^^^^^^^^^^ */
+#stylefour{position:relative;display:block;height:39px;font-size:12px;font-weight:bold;background:transparent url(/images/bgOFF.gif) repeat-x top left;font-family:Arial,Verdana,Helvitica,sans-serif;border-top:1px solid #B30000;}
+#stylefour ul{margin:0;padding:0;list-style-type:none;width:auto;}
+#stylefour ul li{display:block;float:left;margin:0;}
+#stylefour ul li a{display:block;float:left;color:#666;text-decoration:none;padding:11px 20px 0 20px;height:23px;background:transparent url(images/bgDIVIDER.gif) no-repeat top right;}
+#stylefour ul li a:hover,#stylefour ul li a.current{color:#B30000;background:#fff url(images/bgON.gif) no-repeat top right;}
+/* ^^^^^^^^ ABOVE IS THE CODE FOR THE MENU ^^^^^^^^^^ */

@@ -1,0 +1,34 @@
+<?php
+
+define('BASE_DIR', '/Users/benjaminmullin/Workspace/kenzei/trunk/shared/dragonphp/version-0.7.5/apps/');
+define('APPLICATION_NAME', 'sample_application');
+define('CACHE_DIR', '/Users/benjaminmullin/Workspace/cache/');
+define('SHARED_DIR', '/Users/benjaminmullin/Workspace/kenzei/trunk/shared/');
+
+define('PLATFORM_ENCRYPTION_KEY','dynamic kenzei is1si ieznek cimanyd');
+define('PLATFORM_ENCRYPTION_IV', '0kenzei0');
+
+define('FRAMEWORK_VERSION', 'version-0.7.5');
+define('FRAMEWORK_DIR', SHARED_DIR . 'dragonphp/' . FRAMEWORK_VERSION . '/');
+
+define('PLATFORM_BASE_DIR', BASE_DIR . 'base/');
+define('PLATFORM_BASE_TOOLS', PLATFORM_BASE_DIR . 'tools/');
+
+
+
+define('PLATFORM_DRAGONPHP_LIBRARY', FRAMEWORK_DIR . 'lib/');
+define('PLATFORM_DRAGONPHP_SERVICES', PLATFORM_DRAGONPHP_LIBRARY . 'services/');
+define('PLATFORM_DRAGONPHP_HELPERS', PLATFORM_DRAGONPHP_LIBRARY . 'helpers/');
+define('PLATFORM_DRAGONPHP_TOOLS', PLATFORM_DRAGONPHP_LIBRARY . 'tools/');
+/* Set Logger Level
+0 = DEBUG
+1 = INFO
+2 = WARNING
+3 = ERROR
+*/
+define('LOGGER_LEVEL', 0);
+
+define('APPLICATION_DB_DIR', BASE_DIR . 'sample_application/conf/');
+define('APPLICATION_URL','http://local.sample_app/');
+
+?>
